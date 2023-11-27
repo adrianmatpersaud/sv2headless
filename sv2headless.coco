@@ -1,15 +1,22 @@
 # Todo
 # - [ ] deal with top files
+# - [ ] deal with custom types + array types
 
 import re
 
 # Trimming Functions: Needed for trimming text
 # ---------------------------------------------------------------------------------
-def denewline(vh) = vh.replace('\n', '')
+def denewline(vh)   = vh.replace('\n', '')
 
 def deinterface(sv) = re.sub(r'\.', '_', sv)
 
-def deimport(sv) = sv.splitlines() |> trim_include |> x -> '\n'.join(x) where:
+def demodule(sv) = re.sub(pattern, '', sv, flags=re.DOTALL) where:
+   pattern = r'module.*\);'
+
+def modulename(sv) = re.findall(pattern, sv) |> x -> x[0] where:
+   pattern = r'module ([A-Za-z0-9_]+)'
+
+def deimport(sv)    = sv.splitlines() |> trim_include |> x -> '\n'.join(x) where:
    trim_include = x -> [line for line in x if 'include' not in line]
 
 postprocess = deinterface ..> deimport
@@ -74,33 +81,74 @@ def classify(wires, modport) = [Wire(name=w.name, type=w.type, io=i) for w, i in
 
 # Package File: Use the lookup function to grab the modport name, just use the regexes to build the sv file
 # ---------------------------------------------------------------------------------
+def grabmodule(sv) = denewline(sv) |> re.findall$(pattern, ?) |> x -> x[0].replace("\t", " ") where:
+   pattern = r'module .*?\(.*?\);'
 
-# ---------------------------------------------------------------------------------
+def grabsvinterface(sv) = re.findall(pattern, sv) |> x -> x[0] where:
+   pattern = r'\.([A-Za-z0-9]+)'
 
-# ---------------------------------------------------------------------------------
-# Type packages: Add support for type packages
-# ---------------------------------------------------------------------------------
+def grabsvwires(sv) = re.findall(pattern, sv) |> createwires where:
+   createwires = ls -> [Wire(name=x[2], type=x[1], io=x[0]) for x in ls]
+   pattern     = r'(input|output) ([A-Za-z]+) ([A-Za-z0-9_]+)'
 
-# ---------------------------------------------------------------------------------
+def getalias(sv) = re.findall(pattern, sv) |> x -> x[0][1] where:
+   pattern = r'[A-Za-z_0-9]+\.([A-Za-z0-9]+) +([A-Za-z0-9]+)'
 
+produceintername = grabmodule ..> grabsvinterface
+
+# Imperative Code
+# ---------------------------------------------------------------------------------
+def vhtowire(vh, port):
+   singles   = matchsingles(vh) |> singletoWire
+   multiples = denewline(vh)    |> createData   |> flatten
+   wires     = singles + multiples
+   modports  = grabmodports(vh) |> genmodports
+   mod       = modports         |> lookupmodport$(?, port)
+   wiresLog  = classify(wires, mod)
+   return wiresLog
+
+def formatwires(wiresLog):
+   form          = x -> "\t" + x.io + " " + x.type + " " + x.name + ","
+   formatted     = [form(x) for x in wiresLog]
+   formatted[-1] = formatted[-1][:-1]
+   nformatted    = formatted |> ls -> "\n".join(ls)
+
+   return nformatted
+# ---------------------------------------------------------------------------------
 
 # Main Code
 # ---------------------------------------------------------------------------------
-test = "register_file_if.vh"
-port = "rf"
+testsv = "register_file.sv"
+testvh = "register_file_if.vh"
+#port   = "rf"
 
-with open(test, 'r') as file1:
-   sv = file1.read()
+with open(testvh, 'r') as file1:
+   vh = file1.read()
    file1.close()
 
-singles   = matchsingles(sv) |> singletoWire
-multiples = denewline(sv)    |> createData   |> flatten
-wires     = singles + multiples
-modports  = grabmodports(sv) |> genmodports
-mod       = modports         |> lookupmodport$(?, port)
-wiresLog  = classify(wires, mod)
+with open(testsv, 'r') as file2:
+   sv = file2.read()
+   file2.close()
 
-#grabmodports(sv) |> ls -> ls[0] |> modinputs |> print
+# creating wires
+svwires = sv |> grabmodule |> grabsvwires
+port    = sv |> produceintername
 
-for i in wiresLog:
-   print(i)
+# give the name to sv wires
+alias   = sv |> grabmodule   |> getalias
+ifwires = vhtowire(vh, port) |> ls -> [Wire(name=(alias + "_" + x.name), io=x.io, type=x.type) for x in ls]
+
+# Wires for .sv port
+nwires  = svwires + ifwires |> formatwires
+
+# Stripped .sv file
+strippedsv = sv |> postprocess |> demodule
+
+# Module name
+modu       = sv |> modulename
+
+# New .sv File
+out = "module " + modu + "(\n" + nwires + "\n);\n" + strippedsv
+
+# output
+print <| out
