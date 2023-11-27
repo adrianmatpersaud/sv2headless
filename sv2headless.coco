@@ -1,0 +1,106 @@
+# Todo
+# - [ ] deal with top files
+
+import re
+
+# Trimming Functions: Needed for trimming text
+# ---------------------------------------------------------------------------------
+def denewline(vh) = vh.replace('\n', '')
+
+def deinterface(sv) = re.sub(r'\.', '_', sv)
+
+def deimport(sv) = sv.splitlines() |> trim_include |> x -> '\n'.join(x) where:
+   trim_include = x -> [line for line in x if 'include' not in line]
+
+postprocess = deinterface ..> deimport
+# ---------------------------------------------------------------------------------
+
+# Single Wire Grab: 
+# ---------------------------------------------------------------------------------
+data Wire(name, type, io)
+data InterWire(type, names)
+
+def matchsingles(vh) = re.findall(pattern, vh) where:
+   pattern = r'(([A-Za-z])+([A-Za-z]|\_)*) +([A-Za-z]+);'
+
+def singletoWire(matches) = [Wire(m[3], m[0], "uninit") for m in matches]
+# ---------------------------------------------------------------------------------
+
+# Multiple Wire Grab: 
+# ---------------------------------------------------------------------------------
+def genwire(inter) = re.findall(pattern, inter.names) |> wires where:
+   pattern = r'([A-Za-z0-9_]+)'
+   wires = ls -> [Wire(i, inter.type, "uninit") for i in ls]
+
+def matchmultiples(vh) = re.findall(pattern, vh) |> createInter where:
+   pattern = r'(([A-Za-z])+([A-Za-z]|\_)*) *(([A-Za-z0-9]+, +)+([A-Za-z0-9]+));'
+   createInter = ls -> [InterWire(i[0], i[3]) for i in ls]
+
+def createData(vh) = matchmultiples(vh) |> ls -> [genwire(i) for i in ls]
+
+def flatten(nested_list) = [item for sublist in nested_list for item in sublist]
+# ---------------------------------------------------------------------------------
+
+# Grab modport: modport -> in + out -> regex their vals -> run an == for all the regexed values
+# ---------------------------------------------------------------------------------
+
+data Modport(name, inputs, outputs)
+
+def grabmodports(vh) = denewline(vh) |> re.findall$(pattern, ?) where:
+   pattern = r'modport .*?\(.*?\);'
+
+def modname(s) = re.findall(pattern, s)[0] where:
+   pattern = r'modport +([A-Za-z0-9_]+)'
+
+def modinputs(s) = re.findall(pattern1, s)[0][1] |> splitcom |> nospace |> filter$(x -> x != "") |> list  where:
+   nospace  = ls -> [string.replace(' ', '').replace('\t', '') for string in ls]
+   splitcom = x -> x.split(",")
+   pattern1 = r'(input(.*?))(output|\);)'
+
+def modoutputs(s) = re.findall(pattern1, s)[0][1] |> splitcom |> nospace |> filter$(x -> x != "") |> list where:
+   nospace  = ls -> [string.replace(' ', '').replace('\t', '') for string in ls]
+   splitcom = x -> x.split(",")
+   pattern1 = r'(output(.*?))(input|\);)'
+
+def genmodports(ls) = [Modport(modname(i), modinputs(i), modoutputs(i))for i in ls]
+
+def lookupmodport(ls, lookup) = ls |> filter$(x -> x.name == lookup) |> list |> x -> x[0]
+
+# Input/Output Classification: Given a modport name, classify the wires as inputs or outputs
+# ---------------------------------------------------------------------------------
+def classify(wires, modport) = [Wire(name=w.name, type=w.type, io=i) for w, i in zip(wires, io)] where:
+   io = ["input" if w.name in modport.inputs else "output" for w in wires]
+# ---------------------------------------------------------------------------------
+
+# Package File: Use the lookup function to grab the modport name, just use the regexes to build the sv file
+# ---------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------
+# Type packages: Add support for type packages
+# ---------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------
+
+
+# Main Code
+# ---------------------------------------------------------------------------------
+test = "register_file_if.vh"
+port = "rf"
+
+with open(test, 'r') as file1:
+   sv = file1.read()
+   file1.close()
+
+singles   = matchsingles(sv) |> singletoWire
+multiples = denewline(sv)    |> createData   |> flatten
+wires     = singles + multiples
+modports  = grabmodports(sv) |> genmodports
+mod       = modports         |> lookupmodport$(?, port)
+wiresLog  = classify(wires, mod)
+
+#grabmodports(sv) |> ls -> ls[0] |> modinputs |> print
+
+for i in wiresLog:
+   print(i)
